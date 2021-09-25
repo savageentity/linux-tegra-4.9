@@ -70,7 +70,6 @@ struct dma_coherent_mem {
 	spinlock_t	spinlock;
 };
 
-static int shrink_thread(void *arg);
 static void shrink_resizable_heap(struct heap_info *h);
 static int heap_resize_locked(struct heap_info *h, bool skip_vpr_config);
 static void release_from_contiguous_heap(struct heap_info *h, phys_addr_t base,
@@ -92,52 +91,6 @@ bool dma_is_coherent_dev(struct device *dev)
 	return true;
 }
 EXPORT_SYMBOL(dma_is_coherent_dev);
-
-static void dma_debugfs_init(struct device *dev, struct heap_info *heap)
-{
-	if (!heap->dma_debug_root) {
-		heap->dma_debug_root = debugfs_create_dir(dev_name(dev), NULL);
-		if (IS_ERR_OR_NULL(heap->dma_debug_root)) {
-			dev_err(dev, "couldn't create debug files\n");
-			return;
-		}
-	}
-
-	if (sizeof(phys_addr_t) == sizeof(u64)) {
-		debugfs_create_x64("curr_base", S_IRUGO,
-			heap->dma_debug_root, (u64 *)&heap->curr_base);
-		debugfs_create_x64("curr_size", S_IRUGO,
-			heap->dma_debug_root, (u64 *)&heap->curr_len);
-
-		debugfs_create_x64("cma_base", S_IRUGO,
-			heap->dma_debug_root, (u64 *)&heap->cma_base);
-		debugfs_create_x64("cma_size", S_IRUGO,
-			heap->dma_debug_root, (u64 *)&heap->cma_len);
-		debugfs_create_x64("cma_chunk_size", S_IRUGO,
-			heap->dma_debug_root, (u64 *)&heap->cma_chunk_size);
-
-		debugfs_create_x64("floor_size", S_IRUGO,
-			heap->dma_debug_root, (u64 *)&heap->floor_size);
-
-	} else {
-		debugfs_create_x32("curr_base", S_IRUGO,
-			heap->dma_debug_root, (u32 *)&heap->curr_base);
-		debugfs_create_x32("curr_size", S_IRUGO,
-			heap->dma_debug_root, (u32 *)&heap->curr_len);
-
-		debugfs_create_x32("cma_base", S_IRUGO,
-			heap->dma_debug_root, (u32 *)&heap->cma_base);
-		debugfs_create_x32("cma_size", S_IRUGO,
-			heap->dma_debug_root, (u32 *)&heap->cma_len);
-		debugfs_create_x32("cma_chunk_size", S_IRUGO,
-			heap->dma_debug_root, (u32 *)&heap->cma_chunk_size);
-
-		debugfs_create_x32("floor_size", S_IRUGO,
-			heap->dma_debug_root, (u32 *)&heap->floor_size);
-	}
-	debugfs_create_x32("num_cma_chunks", S_IRUGO,
-		heap->dma_debug_root, (u32 *)&heap->num_chunks);
-}
 
 int dma_set_resizable_heap_floor_size(struct device *dev, size_t floor_size)
 {
@@ -275,26 +228,6 @@ static void dma_release_coherent_memory(struct dma_coherent_mem *mem)
 skip_unmapping:
 	kfree(mem->bitmap);
 	kfree(mem);
-}
-
-static int declare_coherent_heap(struct device *dev, phys_addr_t base,
-					size_t size, int map)
-{
-	int err;
-	int flags = map ? DMA_MEMORY_MAP : DMA_MEMORY_NOMAP;
-
-	BUG_ON(dev->dma_mem);
-	dma_set_coherent_mask(dev,  DMA_BIT_MASK(64));
-	err = dma_declare_coherent_memory(dev, 0,
-			base, size, flags);
-	if (err & flags) {
-		dev_dbg(dev, "dma coherent mem base (%pa) size (0x%zx) %x\n",
-			&base, size, flags);
-		return 0;
-	}
-	dev_err(dev, "declare dma coherent_mem fail %pa 0x%zx %x\n",
-		&base, size, flags);
-	return -ENOMEM;
 }
 
 int dma_declare_coherent_resizable_cma_memory(struct device *dev,
@@ -963,38 +896,6 @@ out_unlock:
  * Helper function used to manage resizable heap shrink timeouts
  */
 
-static void shrink_timeout(unsigned long __data)
-{
-	struct task_struct *p = (struct task_struct *) __data;
-
-	wake_up_process(p);
-}
-
-static int shrink_thread(void *arg)
-{
-	struct heap_info *h = arg;
-
-	/*
-	 * Set up an interval timer which can be used to trigger a commit wakeup
-	 * after the commit interval expires
-	 */
-	setup_timer(&h->shrink_timer, shrink_timeout,
-			(unsigned long)current);
-	h->task = current;
-
-	while (1) {
-		if (kthread_should_stop())
-			break;
-
-		shrink_resizable_heap(h);
-		/* resize done. goto sleep */
-		set_current_state(TASK_INTERRUPTIBLE);
-		schedule();
-	}
-
-	return 0;
-}
-
 void dma_release_declared_memory(struct device *dev)
 {
 	struct dma_coherent_mem *mem = dev->dma_mem;
@@ -1276,3 +1177,4 @@ out:
 	return 0;
 }
 EXPORT_SYMBOL(dma_get_coherent_stats);
+
