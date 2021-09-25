@@ -1617,8 +1617,8 @@ static int __too_many_isolated(struct pglist_data *pgdat, int file,
 			isolated = node_page_state_snapshot(pgdat,
 					NR_ISOLATED_FILE);
 		} else {
-			inactive = node_page_state(zone, NR_INACTIVE_FILE);
-			isolated = node_page_state(zone, NR_ISOLATED_FILE);
+			inactive = node_page_state(pgdat, NR_INACTIVE_FILE);
+			isolated = node_page_state(pgdat, NR_ISOLATED_FILE);
 		}
 	} else {
 		if (safe) {
